@@ -5,10 +5,8 @@ import static com.snowflake.kafka.connector.internal.streaming.channel.TopicPart
 import static org.awaitility.Awaitility.await;
 
 import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
-import com.snowflake.kafka.connector.dlq.InMemoryKafkaRecordErrorReporter;
 import com.snowflake.kafka.connector.internal.SnowflakeConnectionService;
 import com.snowflake.kafka.connector.internal.SnowflakeSinkService;
-import com.snowflake.kafka.connector.internal.SnowflakeSinkServiceFactory;
 import com.snowflake.kafka.connector.internal.TestUtils;
 import io.confluent.connect.avro.AvroConverter;
 import io.confluent.kafka.schemaregistry.client.MockSchemaRegistryClient;
@@ -18,7 +16,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Stream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
@@ -29,9 +26,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.api.Test;
 
 public class SnowflakeSinkServiceV2AvroSchematizationIT {
 
@@ -46,6 +41,8 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
   private static final String FIRST_NAME = "FIRST_NAME";
   private static final String RATING_FLOAT32 = "RATING_FLOAT32";
   private static final String FLOAT_NAN = "FLOAT_NAN";
+  private static final String FLOAT_POSITIVE_INFINITY = "FLOAT_POSITIVE_INFINITY";
+  private static final String FLOAT_NEGATIVE_INFINITY = "FLOAT_NEGATIVE_INFINITY";
   private static final String RATING_FLOAT64 = "RATING_FLOAT64";
   private static final String APPROVAL = "APPROVAL";
   private static final String INFO_ARRAY_STRING = "INFO_ARRAY_STRING";
@@ -65,6 +62,8 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
           put(FIRST_NAME, "VARCHAR");
           put(RATING_FLOAT32, "FLOAT");
           put(FLOAT_NAN, "FLOAT");
+          put(FLOAT_POSITIVE_INFINITY, "FLOAT");
+          put(FLOAT_NEGATIVE_INFINITY, "FLOAT");
           put(RATING_FLOAT64, "FLOAT");
           put(APPROVAL, "BOOLEAN");
           put(INFO_ARRAY_STRING, "ARRAY");
@@ -95,14 +94,12 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
     service.closeAll();
   }
 
-  @ParameterizedTest(name = "useSingleBuffer: {0}")
-  @MethodSource("singleBufferParameters")
-  public void testSchematizationWithTableCreationAndAvroInput(boolean useSingleBuffer)
-      throws Exception {
+  @Test
+  public void testSchematizationWithTableCreationAndAvroInput() throws Exception {
     // given
     conn.createTableWithOnlyMetadataColumn(table);
     SinkRecord avroRecordValue = createSinkRecord();
-    service = createService(useSingleBuffer);
+    service = createService();
 
     // when
     // The first insert should fail and schema evolution will kick in to update the schema
@@ -129,6 +126,12 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
     Assertions.assertEquals(actual.get(RATING_FLOAT32), 0.99);
     Assertions.assertEquals(
         actual.get(FLOAT_NAN), Double.NaN); // float is extended to double on SF side
+    Assertions.assertEquals(
+        actual.get(FLOAT_POSITIVE_INFINITY),
+        Double.POSITIVE_INFINITY); // float is extended to double on SF side
+    Assertions.assertEquals(
+        actual.get(FLOAT_NEGATIVE_INFINITY),
+        Double.NEGATIVE_INFINITY); // float is extended to double on SF side
     Assertions.assertEquals(actual.get(RATING_FLOAT64), 0.99);
     Assertions.assertEquals(actual.get(APPROVAL), true);
     Assertions.assertEquals(
@@ -142,15 +145,14 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
         StringUtils.deleteWhitespace(actual.get(INFO_MAP).toString()), "{\"field\":3}");
   }
 
-  private SnowflakeSinkService createService(boolean useSingleBuffer) {
-    Map<String, String> config = prepareConfig(useSingleBuffer);
-    return SnowflakeSinkServiceFactory.builder(
-            conn, IngestionMethodConfig.SNOWPIPE_STREAMING, config)
-        .setRecordNumber(1)
-        .setErrorReporter(new InMemoryKafkaRecordErrorReporter())
-        .setSinkTaskContext(new InMemorySinkTaskContext(Collections.singleton(topicPartition)))
-        .addTask(table, new TopicPartition(topic, PARTITION))
-        .build();
+  private SnowflakeSinkService createService() {
+    Map<String, String> config = prepareConfig();
+    SnowflakeSinkService service =
+        StreamingSinkServiceBuilder.builder(conn, config)
+            .withSinkTaskContext(new InMemorySinkTaskContext(Collections.singleton(topicPartition)))
+            .build();
+    service.startPartition(table, new TopicPartition(topic, PARTITION));
+    return service;
   }
 
   private SinkRecord createSinkRecord() {
@@ -181,8 +183,8 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
     return avroConverter;
   }
 
-  private Map<String, String> prepareConfig(boolean useSingleBuffer) {
-    Map<String, String> config = TestUtils.getConfForStreaming(useSingleBuffer);
+  private Map<String, String> prepareConfig() {
+    Map<String, String> config = TestUtils.getConfForStreaming();
     config.put(SnowflakeSinkConnectorConfig.ENABLE_SCHEMATIZATION_CONFIG, "true");
     config.put(
         SnowflakeSinkConnectorConfig.VALUE_CONVERTER_CONFIG_FIELD,
@@ -203,6 +205,8 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
             .field(FIRST_NAME, Schema.STRING_SCHEMA)
             .field(RATING_FLOAT32, Schema.FLOAT32_SCHEMA)
             .field(FLOAT_NAN, Schema.FLOAT32_SCHEMA)
+            .field(FLOAT_POSITIVE_INFINITY, Schema.FLOAT32_SCHEMA)
+            .field(FLOAT_NEGATIVE_INFINITY, Schema.FLOAT32_SCHEMA)
             .field(RATING_FLOAT64, Schema.FLOAT64_SCHEMA)
             .field(APPROVAL, Schema.BOOLEAN_SCHEMA)
             .field(INFO_ARRAY_STRING, SchemaBuilder.array(Schema.STRING_SCHEMA).build())
@@ -221,6 +225,8 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
         .put(FIRST_NAME, "zekai")
         .put(RATING_FLOAT32, 0.99f)
         .put(FLOAT_NAN, Float.NaN)
+        .put(FLOAT_POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+        .put(FLOAT_NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY)
         .put(RATING_FLOAT64, 0.99d)
         .put(APPROVAL, true)
         .put(INFO_ARRAY_STRING, Arrays.asList("a", "b"))
@@ -229,10 +235,6 @@ public class SnowflakeSinkServiceV2AvroSchematizationIT {
             INFO_ARRAY_JSON,
             Arrays.asList(null, "{\"a\": 1, \"b\": null, \"c\": null, \"d\": \"89asda9s0a\"}"))
         .put(INFO_MAP, Collections.singletonMap("field", 3));
-  }
-
-  private static Stream<Arguments> singleBufferParameters() {
-    return Stream.of(Arguments.of(false), Arguments.of(true));
   }
 
   private void waitUntilOffsetEquals(long expectedOffset) {

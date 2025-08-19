@@ -394,13 +394,6 @@ public class ConnectorConfigDefinition {
             ConfigDef.Importance.LOW,
             "Memory limit for ingest sdk client in bytes.")
         .define(
-            SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-            ConfigDef.Type.BOOLEAN,
-            SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER_DEFAULT,
-            ConfigDef.Importance.LOW,
-            "When enabled, it will disable kafka connector buffer and only use ingest sdk buffer"
-                + " instead of both.")
-        .define(
             SNOWPIPE_STREAMING_CLIENT_PROVIDER_OVERRIDE_MAP,
             ConfigDef.Type.STRING,
             "",
@@ -489,6 +482,12 @@ public class ConnectorConfigDefinition {
             ConfigDef.Importance.HIGH,
             "When set to true the connector will ingest data into the Iceberg table. Check the"
                 + " official Snowflake documentation for the prerequisites.")
+        .define(
+            SNOWPIPE_STREAMING_V2_ENABLED,
+            ConfigDef.Type.BOOLEAN,
+            SNOWPIPE_STREAMING_V2_ENABLED_DEFAULT_VALUE,
+            ConfigDef.Importance.HIGH,
+            "When set to true the connector will ingest data using Snowpipe Streaming v2.")
         .define(
             ENABLE_CHANNEL_OFFSET_TOKEN_VERIFICATION_FUNCTION_CONFIG,
             ConfigDef.Type.BOOLEAN,

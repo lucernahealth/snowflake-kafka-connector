@@ -18,6 +18,7 @@ package com.snowflake.kafka.connector;
 
 import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.ICEBERG_ENABLED;
 import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.INGESTION_METHOD_OPT;
+import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_V2_ENABLED_DEFAULT_VALUE;
 
 import com.google.common.collect.ImmutableMap;
 import com.snowflake.kafka.connector.internal.InternalUtils;
@@ -43,7 +44,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Random;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -65,7 +66,7 @@ import org.apache.kafka.common.config.ConfigValue;
 public class Utils {
 
   // Connector version, change every release
-  public static final String VERSION = "3.1.0";
+  public static final String VERSION = "3.2.0";
 
   // connector parameter list
   public static final String NAME = "name";
@@ -74,7 +75,6 @@ public class Utils {
   public static final String SF_USER = "snowflake.user.name";
   public static final String SF_PRIVATE_KEY = "snowflake.private.key";
   public static final String SF_URL = "snowflake.url.name";
-  public static final String SF_SSL = "sfssl"; // for test only
   public static final String SF_WAREHOUSE = "sfwarehouse"; // for test only
   public static final String PRIVATE_KEY_PASSPHRASE = "snowflake.private.key" + ".passphrase";
   public static final String SF_AUTHENTICATOR =
@@ -117,8 +117,6 @@ public class Utils {
   // jdbc log dir
   public static final String JAVA_IO_TMPDIR = "java.io.tmpdir";
 
-  private static final Random random = new Random();
-
   // mvn repo
   private static final String MVN_REPO =
       "https://repo1.maven.org/maven2/com/snowflake/snowflake-kafka-connector/";
@@ -145,10 +143,10 @@ public class Utils {
   }
 
   /**
-   * check the connector version from Maven repo, report if any update version is available.
+   * Check the connector version from Maven repo, report if any update version is available.
    *
    * <p>A URl connection timeout is added in case Maven repo is not reachable in a proxy'd
-   * environment. Returning false from this method doesnt have any side effects to start the
+   * environment. Returning false from this method doesn't have any side effects to start the
    * connector.
    */
   static boolean checkConnectorVersion() {
@@ -412,12 +410,27 @@ public class Utils {
         config.get(SnowflakeSinkConnectorConfig.ENABLE_SCHEMATIZATION_CONFIG));
   }
 
+  public static boolean isSnowpipeStreamingV2Enabled(Map<String, String> config) {
+    return Optional.ofNullable(
+            config.get(SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_V2_ENABLED))
+        .map(Boolean::parseBoolean)
+        .orElse(SNOWPIPE_STREAMING_V2_ENABLED_DEFAULT_VALUE);
+  }
+
   /**
    * @param config config with applied default values
    * @return role specified in rhe config
    */
-  public static String role(Map<String, String> config) {
+  public static String getRole(Map<String, String> config) {
     return config.get(SF_ROLE);
+  }
+
+  public static String getDatabase(Map<String, String> config) {
+    return config.get(SF_DATABASE);
+  }
+
+  public static String getSchema(Map<String, String> config) {
+    return config.get(SF_SCHEMA);
   }
 
   /**
@@ -428,6 +441,10 @@ public class Utils {
    */
   public static boolean isSnowpipeStreamingIngestion(Map<String, String> config) {
     return !isSnowpipeIngestion(config);
+  }
+
+  public static String getUser(Map<String, String> config) {
+    return config.get(SF_USER);
   }
 
   /**

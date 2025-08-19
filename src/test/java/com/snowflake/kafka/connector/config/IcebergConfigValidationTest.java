@@ -1,9 +1,8 @@
 package com.snowflake.kafka.connector.config;
 
 import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.INGESTION_METHOD_OPT;
-import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER;
+import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_V2_ENABLED;
 
-import com.google.common.collect.ImmutableMap;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
 import com.snowflake.kafka.connector.internal.streaming.StreamingConfigValidator;
 import java.util.Map;
@@ -21,7 +20,7 @@ public class IcebergConfigValidationTest {
   @MethodSource("validConfigs")
   public void shouldValidateCorrectConfig(Map<String, String> config) {
     // when
-    ImmutableMap<String, String> invalidParameters = validator.validate(config);
+    Map<String, String> invalidParameters = validator.validate(config);
 
     // then
     Assertions.assertTrue(invalidParameters.isEmpty());
@@ -31,7 +30,7 @@ public class IcebergConfigValidationTest {
   @MethodSource("invalidConfigs")
   public void shouldReturnErrorOnInvalidConfig(Map<String, String> config, String errorKey) {
     // when
-    ImmutableMap<String, String> invalidParameters = validator.validate(config);
+    Map<String, String> invalidParameters = validator.validate(config);
 
     // then
     Assertions.assertTrue(invalidParameters.containsKey(errorKey));
@@ -56,8 +55,8 @@ public class IcebergConfigValidationTest {
             INGESTION_METHOD_OPT),
         Arguments.of(
             SnowflakeSinkConnectorConfigBuilder.icebergConfig()
-                .withSingleBufferEnabled(false)
+                .withSnowpipeStreamingV2Enabled()
                 .build(),
-            SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER));
+            SNOWPIPE_STREAMING_V2_ENABLED));
   }
 }

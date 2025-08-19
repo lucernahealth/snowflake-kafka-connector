@@ -4,7 +4,7 @@ import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.*;
 import static com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig.SNOWPIPE_STREAMING;
 
 import com.google.common.collect.ImmutableMap;
-import com.snowflake.kafka.connector.internal.parameters.InternalBufferParameters;
+import com.snowflake.kafka.connector.Utils;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
 import com.snowflake.kafka.connector.internal.streaming.StreamingConfigValidator;
 import java.util.HashMap;
@@ -15,10 +15,8 @@ public class IcebergConfigValidator implements StreamingConfigValidator {
   private static final String INCOMPATIBLE_INGESTION_METHOD =
       "Ingestion to Iceberg table is supported only for Snowpipe Streaming";
 
-  private static final String DOUBLE_BUFFER_NOT_SUPPORTED =
-      "Ingestion to Iceberg table is supported only with "
-          + SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER
-          + " enabled.";
+  private static final String ICEBERG_NOT_SUPPORTED_IN_SSV2 =
+      "Ingestion to Iceberg table is not supported by Snowpipe Streaming v2";
 
   @Override
   public ImmutableMap<String, String> validate(Map<String, String> inputConfig) {
@@ -37,8 +35,8 @@ public class IcebergConfigValidator implements StreamingConfigValidator {
       validationErrors.put(INGESTION_METHOD_OPT, INCOMPATIBLE_INGESTION_METHOD);
     }
 
-    if (!InternalBufferParameters.isSingleBufferEnabled(inputConfig)) {
-      validationErrors.put(SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER, DOUBLE_BUFFER_NOT_SUPPORTED);
+    if (Utils.isSnowpipeStreamingV2Enabled(inputConfig)) {
+      validationErrors.put(SNOWPIPE_STREAMING_V2_ENABLED, ICEBERG_NOT_SUPPORTED_IN_SSV2);
     }
 
     return ImmutableMap.copyOf(validationErrors);

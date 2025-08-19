@@ -12,7 +12,7 @@
 
     <groupId>com.snowflake</groupId>
     <artifactId>snowflake-kafka-connector</artifactId>
-    <version>3.1.0</version>
+    <version>3.2.0</version>
     <packaging>jar</packaging>
     <name>Snowflake Kafka Connector</name>
     <description>Snowflake Kafka Connect Sink Connector</description>
@@ -42,10 +42,10 @@
         <url>https://github.com/snowflakedb/snowflake-kafka-connector</url>
     </scm>
 
-    <!-- Set our Language Level to Java 8 -->
+    <!-- Set our Language Level to Java 11 -->
     <properties>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
         <skipTests>false</skipTests>
         <skipUnitTests>${skipTests}</skipUnitTests>
         <skipIntegrationTests>${skipTests}</skipIntegrationTests>
@@ -60,15 +60,20 @@
         -->
         <license.processing.targetDir>${project.build.directory}/../licenses</license.processing.targetDir>
 
-        <kafka.version>3.8.1</kafka.version>
+        <kafka.version>3.9.1</kafka.version>
         <awaitility.version>4.2.2</awaitility.version>
         <assertj-core.version>3.26.3</assertj-core.version>
-        <confluent.version>7.8.0</confluent.version>
+        <confluent.version>7.9.2</confluent.version>
         <!--Compatible protobuf version https://github.com/confluentinc/common/blob/v7.7.0/pom.xml#L91 -->
         <protobuf.version>3.25.5</protobuf.version>
+        <guava.version>33.4.0-jre</guava.version>
         <iceberg.version>1.6.1</iceberg.version>
         <jackson.version>2.18.2</jackson.version>
         <commons-compress.version>1.27.1</commons-compress.version>
+        <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+        <snowflake-jdbc.version>3.24.2</snowflake-jdbc.version>
+        <slf4j-api.version>2.0.17</slf4j-api.version>
+        <parquet.version>1.14.4</parquet.version>
     </properties>
 
 
@@ -96,7 +101,7 @@
     <distributionManagement>
         <snapshotRepository>
             <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+            <url>https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots</url>
         </snapshotRepository>
     </distributionManagement>
     <build>
@@ -314,14 +319,14 @@
                 <extensions>true</extensions>
                 <configuration>
                     <serverId>ossrh</serverId>
-                    <nexusUrl>https://oss.sonatype.org/</nexusUrl>
+                    <nexusUrl>https://ossrh-staging-api.central.sonatype.com/</nexusUrl>
                     <autoReleaseAfterClose>true</autoReleaseAfterClose>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.22.0</version>
+                <version>${maven-surefire-plugin.version}</version>
                 <configuration>
                     <skipTests>${skipUnitTests}</skipTests>
                 </configuration>
@@ -393,7 +398,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.4.1</version>
+                <version>3.11.2</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
@@ -465,7 +470,7 @@
         <dependency>
             <groupId>net.snowflake</groupId>
             <artifactId>snowflake-jdbc</artifactId>
-            <version>3.20.0</version>
+            <version>${snowflake-jdbc.version}</version>
         </dependency>
 
         <dependency>
@@ -483,7 +488,7 @@
         <dependency>
             <groupId>net.snowflake</groupId>
             <artifactId>snowflake-ingest-sdk</artifactId>
-            <version>3.0.1</version>
+            <version>3.1.2</version>
             <exclusions>
                 <exclusion>
                     <groupId>net.snowflake</groupId>
@@ -598,12 +603,6 @@
 
         <dependency>
             <groupId>io.confluent</groupId>
-            <artifactId>kafka-schema-rules</artifactId>
-            <version>${confluent.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.confluent</groupId>
             <artifactId>kafka-schema-registry-client-encryption</artifactId>
             <version>${confluent.version}</version>
         </dependency>
@@ -624,7 +623,7 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>32.0.1-jre</version>
+            <version>${guava.version}</version>
         </dependency>
 
         <!-- https://github.com/failsafe-lib/failsafe-->
@@ -632,6 +631,12 @@
             <groupId>dev.failsafe</groupId>
             <artifactId>failsafe</artifactId>
             <version>3.3.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.parquet</groupId>
+            <artifactId>parquet-column</artifactId>
+            <version>${parquet.version}</version>
         </dependency>
 
         <!--junit for unit test-->
@@ -669,12 +674,12 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>1.7.25</version>
+            <version>${slf4j-api.version}</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
-            <version>1.7.25</version>
+            <version>${slf4j-api.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -773,6 +778,12 @@
             <version>${iceberg.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.snowflake</groupId>
+            <artifactId>snowpipe-streaming</artifactId>
+            <version>v0.3.0</version>
+        </dependency>
+
     </dependencies>
 
     <profiles>
@@ -820,6 +831,10 @@
                             </includes>
                             <excludes>
                                 <exclude>**/*Iceberg*IT.java</exclude>
+                                <!-- Rowset API is disabled on Azure and GCP -->
+                                <exclude>**/*RowSchemaProvider*IT.java</exclude>
+                                <exclude>**/*StreamingIngestClientV2Provider*IT.java</exclude>
+                                <exclude>**/*SnowflakeSinkServiceV2*IT.java</exclude>
                             </excludes>
                             <skipTests>${skipIntegrationTests}</skipTests>
                         </configuration>

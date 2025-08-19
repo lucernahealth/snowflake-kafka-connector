@@ -1,7 +1,14 @@
 package com.snowflake.kafka.connector;
 
 import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.*;
+import static com.snowflake.kafka.connector.Utils.HTTPS_PROXY_HOST;
+import static com.snowflake.kafka.connector.Utils.HTTPS_PROXY_PASSWORD;
+import static com.snowflake.kafka.connector.Utils.HTTPS_PROXY_PORT;
+import static com.snowflake.kafka.connector.Utils.HTTPS_PROXY_USER;
 import static com.snowflake.kafka.connector.Utils.HTTP_NON_PROXY_HOSTS;
+import static com.snowflake.kafka.connector.Utils.HTTP_PROXY_HOST;
+import static com.snowflake.kafka.connector.Utils.HTTP_PROXY_PORT;
+import static com.snowflake.kafka.connector.Utils.HTTP_USE_PROXY;
 import static com.snowflake.kafka.connector.internal.TestUtils.getConfig;
 import static org.assertj.core.api.Assertions.*;
 import static org.junit.Assert.assertEquals;
@@ -13,7 +20,6 @@ import com.snowflake.kafka.connector.internal.SnowflakeErrors;
 import com.snowflake.kafka.connector.internal.SnowflakeKafkaConnectorException;
 import com.snowflake.kafka.connector.internal.streaming.DefaultStreamingConfigValidator;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
-import com.snowflake.kafka.connector.internal.streaming.StreamingUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -169,6 +175,15 @@ public class ConnectorConfigValidatorTest {
     } else {
       System.clearProperty(HTTP_NON_PROXY_HOSTS);
     }
+
+    // clear properties to prevent other tests from failing
+    System.clearProperty(HTTP_USE_PROXY);
+    System.clearProperty(HTTP_PROXY_HOST);
+    System.clearProperty(HTTP_PROXY_PORT);
+    System.clearProperty(HTTPS_PROXY_HOST);
+    System.clearProperty(HTTPS_PROXY_PORT);
+    System.clearProperty(HTTPS_PROXY_USER);
+    System.clearProperty(HTTPS_PROXY_PASSWORD);
   }
 
   @Test
@@ -484,93 +499,6 @@ public class ConnectorConfigValidatorTest {
     assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
         .isInstanceOf(SnowflakeKafkaConnectorException.class)
         .hasMessageContaining(SnowflakeSinkConnectorConfig.ERRORS_LOG_ENABLE_CONFIG);
-  }
-
-  // ---------- Streaming Buffer tests ---------- //
-  @Test
-  public void testStreamingEmptyFlushTime() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.remove(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC);
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC);
-  }
-
-  @Test
-  public void testStreamingFlushTimeSmall() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.put(
-        SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC,
-        (StreamingUtils.STREAMING_BUFFER_FLUSH_TIME_MINIMUM_SEC - 1) + "");
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC);
-  }
-
-  @Test
-  public void testStreamingFlushTimeNotNumber() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.put(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC, "fdas");
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC);
-  }
-
-  @Test
-  public void testStreamingEmptyBufferSize() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.remove(BUFFER_SIZE_BYTES);
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES);
-  }
-
-  @Test
-  public void testStreamingEmptyBufferCount() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.remove(BUFFER_COUNT_RECORDS);
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(BUFFER_COUNT_RECORDS);
-  }
-
-  @Test
-  public void testStreamingBufferCountNegative() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.put(BUFFER_COUNT_RECORDS, "-1");
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(BUFFER_COUNT_RECORDS);
-  }
-
-  @Test
-  public void testStreamingBufferCountValue() {
-    Map<String, String> config =
-        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
-            .withSingleBufferEnabled(false)
-            .build();
-    config.put(BUFFER_COUNT_RECORDS, "adssadsa");
-    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
-        .isInstanceOf(SnowflakeKafkaConnectorException.class)
-        .hasMessageContaining(BUFFER_COUNT_RECORDS);
   }
 
   @Test
@@ -999,6 +927,30 @@ public class ConnectorConfigValidatorTest {
         .hasMessageContaining(SnowflakeSinkConnectorConfig.OAUTH_REFRESH_TOKEN);
   }
 
+  @Test
+  public void shouldValidateSSv2Config() {
+    Map<String, String> config =
+        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
+            .withSnowpipeStreamingV2Enabled()
+            .build();
+
+    assertThatCode(() -> connectorConfigValidator.validateConfig(config))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  public void shouldThrowExceptionWhenRoleNotDefinedForSSv2() {
+    Map<String, String> config =
+        SnowflakeSinkConnectorConfigBuilder.streamingConfig()
+            .withSnowpipeStreamingV2Enabled()
+            .withoutRole()
+            .build();
+
+    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
+        .isInstanceOf(SnowflakeKafkaConnectorException.class)
+        .hasMessageContaining(SNOWFLAKE_ROLE);
+  }
+
   private void invalidConfigRunner(List<String> paramsToRemove) {
     Map<String, String> config = getConfig();
     for (String configParam : paramsToRemove) {
@@ -1012,5 +964,23 @@ public class ConnectorConfigValidatorTest {
         assert exception.getMessage().contains(configParam);
       }
     }
+  }
+
+  @Test
+  public void testENABLE_REPROCESS_FILES_CLEANUP_valid_value() {
+    Map<String, String> config = getConfig();
+    config.put(SnowflakeSinkConnectorConfig.SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP, "true");
+    connectorConfigValidator.validateConfig(config);
+    config.put(SnowflakeSinkConnectorConfig.SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP, "False");
+    connectorConfigValidator.validateConfig(config);
+  }
+
+  @Test
+  public void testENABLE_REPROCESS_FILES_CLEANUP_invalid_value() {
+    Map<String, String> config = getConfig();
+    config.put(SnowflakeSinkConnectorConfig.SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP, "INVALID");
+    assertThatThrownBy(() -> connectorConfigValidator.validateConfig(config))
+        .isInstanceOf(SnowflakeKafkaConnectorException.class)
+        .hasMessageContaining(SnowflakeSinkConnectorConfig.SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP);
   }
 }

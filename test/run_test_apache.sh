@@ -10,7 +10,7 @@ function error_exit() {
 }
 
 function random-string() {
-    cat /dev/urandom | env LC_CTYPE=C tr -cd 'a-z0-9' | head -c 4
+     echo $RANDOM$RANDOM | base64 |  cut -c1-7
 }
 
 source ./utils.sh
@@ -113,10 +113,10 @@ echo $lsCommand
 
 if [ $lsCommand == 0 ]; then
     echo "Installing fips Jars in:"$fipsInstallDirectory
-    wget -P $fipsInstallDirectory https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-fips/1.0.3/bcpkix-fips-1.0.3.jar
-    wget -P $fipsInstallDirectory https://repo1.maven.org/maven2/org/bouncycastle/bc-fips/1.0.2/bc-fips-1.0.2.jar
-    cp $fipsInstallDirectory/bcpkix-fips-1.0.3.jar $KAFKA_CONNECT_PLUGIN_PATH
-    cp $fipsInstallDirectory/bc-fips-1.0.2.jar $KAFKA_CONNECT_PLUGIN_PATH
+    wget -P $fipsInstallDirectory https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-fips/2.1.8/bcpkix-fips-2.1.8.jar
+    wget -P $fipsInstallDirectory https://repo1.maven.org/maven2/org/bouncycastle/bc-fips/2.1.0/bc-fips-2.1.0.jar
+    cp $fipsInstallDirectory/bcpkix-fips-2.1.8.jar $KAFKA_CONNECT_PLUGIN_PATH
+    cp $fipsInstallDirectory/bc-fips-2.1.0.jar $KAFKA_CONNECT_PLUGIN_PATH
     echo "list KAFKA_CONNECT_PLUGIN_PATH: $KAFKA_CONNECT_PLUGIN_PATH"
     ls $KAFKA_CONNECT_PLUGIN_PATH
     echo "list apache test libs directory: $fipsInstallDirectory"

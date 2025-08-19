@@ -4,7 +4,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
 import com.snowflake.kafka.connector.Utils;
 import com.snowflake.kafka.connector.records.SnowflakeConverter;
@@ -37,7 +36,6 @@ public class SinkServiceIT {
   private String pipe = Utils.pipeName(TestUtils.TEST_CONNECTOR_NAME, table, partition);
   private String pipe1 = Utils.pipeName(TestUtils.TEST_CONNECTOR_NAME, table, partition1);
   private String topic = "test";
-  private static ObjectMapper MAPPER = new ObjectMapper();
 
   @After
   public void afterEach() {
@@ -45,51 +43,6 @@ public class SinkServiceIT {
     conn.dropPipe(pipe);
     conn.dropPipe(pipe1);
     TestUtils.dropTable(table);
-  }
-
-  @Test
-  public void testSinkServiceBuilder() {
-    // default value
-    SnowflakeSinkService service = SnowflakeSinkServiceFactory.builder(conn).build();
-
-    assert service.getFileSize() == SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_DEFAULT;
-    assert service.getFlushTime() == SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_DEFAULT;
-    assert service.getRecordNumber() == SnowflakeSinkConnectorConfig.BUFFER_COUNT_RECORDS_DEFAULT;
-
-    // set some value
-    service =
-        SnowflakeSinkServiceFactory.builder(conn)
-            .setFileSize(SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_DEFAULT * 4)
-            .setFlushTime(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_MIN + 10)
-            .setRecordNumber(10)
-            .build();
-
-    assert service.getRecordNumber() == 10;
-    assert service.getFlushTime() == SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_MIN + 10;
-    assert service.getFileSize() == SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_DEFAULT * 4;
-
-    // set some invalid value
-    service =
-        SnowflakeSinkServiceFactory.builder(conn)
-            .setRecordNumber(-100)
-            .setFlushTime(SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_MIN - 10)
-            .setFileSize(SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_MIN - 1)
-            .build();
-
-    assert service.getFileSize() == SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_DEFAULT;
-    assert service.getFlushTime() == SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_MIN;
-    assert service.getRecordNumber() == 0;
-
-    // connection test
-    assert TestUtils.assertError(
-        SnowflakeErrors.ERROR_5010, () -> SnowflakeSinkServiceFactory.builder(null).build());
-    assert TestUtils.assertError(
-        SnowflakeErrors.ERROR_5010,
-        () -> {
-          SnowflakeConnectionService conn = TestUtils.getConnectionService();
-          conn.close();
-          SnowflakeSinkServiceFactory.builder(conn).build();
-        });
   }
 
   @ParameterizedTest
@@ -806,6 +759,76 @@ public class SinkServiceIT {
     // verify that filename2 appears in table stage
     List<String> files = conn.listStage(table, "", true);
     assert files.size() == 2;
+
+    service.closeAll();
+  }
+
+  @Test
+  public void testReprocessFilesCleanupDisabled() throws Exception {
+    String data =
+        "{\"content\":{\"name\":\"test\"},\"meta\":{\"offset\":0,"
+            + "\"topic\":\"test\",\"partition\":0}}";
+
+    // Two hours ago                         h   m    s    milli
+    long time = System.currentTimeMillis() - 2 * 60 * 60 * 1000L;
+
+    String fileName1 =
+        FileNameTestUtils.fileName(TestUtils.TEST_CONNECTOR_NAME, table, null, 0, 0, 0, time);
+    String fileName2 =
+        FileNameTestUtils.fileName(TestUtils.TEST_CONNECTOR_NAME, table, null, 0, 1, 1, time);
+    String fileName3 =
+        FileNameTestUtils.fileName(TestUtils.TEST_CONNECTOR_NAME, table, null, 0, 2, 3, time);
+    String fileName4 =
+        FileNameTestUtils.fileName(TestUtils.TEST_CONNECTOR_NAME, table, null, 0, 4, 5, time);
+
+    conn.createStage(stage);
+    conn.createTable(table);
+    conn.createPipe(table, stage, pipe);
+    SnowflakeIngestionService ingestionService = conn.buildIngestService(stage, pipe);
+    // File 1 is successfully ingested (ingest history can find this file, so removed)
+    // File 2 is not ingested, so moved to table stage
+    // File 3 is not ingested, so moved to table stage
+    // File 4 is removed by reprocess cleaner
+    conn.put(stage, fileName1, data);
+    conn.put(stage, fileName2, data);
+    conn.put(stage, fileName3, data);
+    conn.put(stage, fileName4, data);
+    ingestionService.ingestFile(fileName1);
+    assert getStageSize(stage, table, 0) == 4;
+
+    Map<String, String> connectorConfig = new HashMap<>();
+    connectorConfig.put(
+        SnowflakeSinkConnectorConfig.SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP, "false");
+    connectorConfig.put(SnowflakeSinkConnectorConfig.SNOWPIPE_FILE_CLEANER_FIX_ENABLED, "false");
+
+    SnowflakeSinkService service =
+        SnowflakeSinkServiceFactory.builder(conn, connectorConfig)
+            .addTask(table, new TopicPartition(topic, partition))
+            .setRecordNumber(1) // immediate flush
+            .build();
+
+    SnowflakeConverter converter = new SnowflakeJsonConverter();
+    SchemaAndValue result =
+        converter.toConnectData(topic, "12321".getBytes(StandardCharsets.UTF_8));
+    // This record is ingested as well.
+    SinkRecord record =
+        new SinkRecord(
+            topic, partition, Schema.STRING_SCHEMA, "test", result.schema(), result.value(), 3);
+    // lazy init and recovery function
+    service.insert(record);
+    // wait for async put
+    TestUtils.assertWithRetry(() -> getStageSize(stage, table, 0) == 5, 5, 10);
+    // call snow pipe
+    service.callAllGetOffset();
+    // cleaner will remove previous files and ingested new file
+    TestUtils.assertWithRetry(() -> getStageSize(stage, table, 0) == 0, 30, 10);
+
+    // When SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP is set to False, files will not be removed from
+    // currentStage.
+    // As a result, fileName4 will eventually be added to the table stage, bringing the total count
+    // to 3.
+    List<String> files = conn.listStage(table, "", true);
+    assert files.size() == 3;
 
     service.closeAll();
   }

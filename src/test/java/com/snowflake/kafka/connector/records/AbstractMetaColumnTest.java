@@ -20,7 +20,6 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.snowflake.kafka.connector.builder.SinkRecordBuilder;
 import com.snowflake.kafka.connector.mock.MockSchemaRegistryClient;
 import java.io.IOException;
@@ -61,7 +60,7 @@ abstract class AbstractMetaColumnTest {
 
   @Test
   public void testKey() throws IOException {
-    RecordService service = RecordServiceFactory.createRecordService(false, false);
+    RecordService service = RecordServiceFactory.createRecordService(false, false, false);
     SchemaAndValue input = getJsonInputData();
     long timestamp = System.currentTimeMillis();
 
@@ -103,7 +102,7 @@ abstract class AbstractMetaColumnTest {
             .withTimestamp(System.currentTimeMillis(), timestampType)
             .build();
 
-    RecordService service = RecordServiceFactory.createRecordService(false, false);
+    RecordService service = RecordServiceFactory.createRecordService(false, false, false);
     service.setMetadataConfig(new SnowflakeMetadataConfig(config));
 
     // when
@@ -122,13 +121,13 @@ abstract class AbstractMetaColumnTest {
     return Stream.of(
         arguments(
             ImmutableMap.of(SNOWFLAKE_METADATA_CREATETIME, "false"),
-            ImmutableSet.of(TOPIC, PARTITION, OFFSET)),
+            Set.of(TOPIC, PARTITION, OFFSET)),
         arguments(
             ImmutableMap.of(SNOWFLAKE_METADATA_TOPIC, "false"),
-            ImmutableSet.of(PARTITION, OFFSET, TimestampType.CREATE_TIME.name)),
+            Set.of(PARTITION, OFFSET, TimestampType.CREATE_TIME.name)),
         arguments(
             ImmutableMap.of(SNOWFLAKE_METADATA_OFFSET_AND_PARTITION, "false"),
-            ImmutableSet.of(TOPIC, TimestampType.CREATE_TIME.name)),
+            Set.of(TOPIC, TimestampType.CREATE_TIME.name)),
         arguments(
             ImmutableMap.of(
                 SNOWFLAKE_METADATA_CREATETIME,
@@ -152,7 +151,7 @@ abstract class AbstractMetaColumnTest {
 
     Map<String, String> config = ImmutableMap.of(SNOWFLAKE_METADATA_ALL, "false");
 
-    RecordService service = RecordServiceFactory.createRecordService(false, false);
+    RecordService service = RecordServiceFactory.createRecordService(false, false, false);
     service.setMetadataConfig(new SnowflakeMetadataConfig(config));
 
     // when
@@ -164,7 +163,7 @@ abstract class AbstractMetaColumnTest {
 
   @Test
   public void testTimeStamp() throws IOException {
-    RecordService service = RecordServiceFactory.createRecordService(false, false);
+    RecordService service = RecordServiceFactory.createRecordService(false, false, false);
     SchemaAndValue input = getJsonInputData();
     long timestamp = System.currentTimeMillis();
 

@@ -5,6 +5,7 @@ import static com.snowflake.kafka.connector.internal.FileNameUtils.searchForMiss
 import static com.snowflake.kafka.connector.internal.metrics.MetricsUtil.BUFFER_RECORD_COUNT;
 import static com.snowflake.kafka.connector.internal.metrics.MetricsUtil.BUFFER_SIZE_BYTES;
 import static com.snowflake.kafka.connector.internal.metrics.MetricsUtil.BUFFER_SUB_DOMAIN;
+import static java.util.Objects.isNull;
 import static org.apache.kafka.common.record.TimestampType.NO_TIMESTAMP_TYPE;
 
 import com.codahale.metrics.Histogram;
@@ -46,6 +47,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -89,9 +91,6 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
   // If this is true, we will enable Mbean for required classes and emit JMX metrics for monitoring
   private boolean enableCustomJMXMonitoring = SnowflakeSinkConnectorConfig.JMX_OPT_DEFAULT;
 
-  // default is false, unless the configuration provided true
-  // if this is true, the service will use new file cleaner module
-  private boolean useStageFilesProcessor = false;
   @Nullable private ScheduledExecutorService cleanerServiceExecutor;
 
   // if enabled, the prefix for stage files for a given table will contain information about source
@@ -99,9 +98,14 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
   // data into a single table.
   private boolean enableStageFilePrefixExtension = false;
 
+  // CC-30278 if disabled cleaner won't delete reprocess files on stage
+  private boolean enableReprocessFilesCleanup = true;
+
   private final Set<String> perTableWarningNotifications = new HashSet<>();
 
-  SnowflakeSinkServiceV1(SnowflakeConnectionService conn) {
+  private final long v2CleanerIntervalSeconds;
+
+  SnowflakeSinkServiceV1(SnowflakeConnectionService conn, long v2CleanerIntervalSeconds) {
     if (conn == null || conn.isClosed()) {
       throw SnowflakeErrors.ERROR_5010.getException();
     }
@@ -113,8 +117,9 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     this.conn = conn;
     isStopped = false;
     this.telemetryService = conn.getTelemetryClient();
-    this.recordService = RecordServiceFactory.createRecordService(false, false);
+    this.recordService = RecordServiceFactory.createRecordService(false, false, false);
     this.topic2TableMap = new HashMap<>();
+    this.v2CleanerIntervalSeconds = v2CleanerIntervalSeconds;
 
     // Setting the default value in constructor
     // meaning it will not ignore the null values (Tombstone records wont be ignored/filtered)
@@ -158,7 +163,8 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
               topicPartition.topic(),
               conn,
               topicPartition.partition(),
-              cleanerServiceExecutor));
+              cleanerServiceExecutor,
+              v2CleanerIntervalSeconds));
 
       if (enableStageFilePrefixExtension
           && TopicToTableModeExtractor.determineTopic2TableMode(
@@ -192,6 +198,15 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
   @Override
   public void insert(final Collection<SinkRecord> records) {
+    if (LOGGER.isTraceEnabled()) {
+      Pair<String, String> offsets = getOffsets(records);
+      LOGGER.debug(
+          "Inserting {} records, firstOffset: {}, lastOffset: {}",
+          records.size(),
+          offsets.getLeft(),
+          offsets.getRight());
+    }
+
     // note that records can be empty
     for (SinkRecord record : records) {
       // check if it needs to handle null value records
@@ -201,13 +216,41 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
       // Might happen a count of record based flushing
       insert(record);
     }
-    // check all sink context to see if they need to be flushed
+
+    if (LOGGER.isTraceEnabled()) {
+      LOGGER.trace(
+          "Checking all sink context to see if they need to be flushed based on time: {}",
+          Arrays.toString(pipes.values().toArray()));
+    }
+
     for (ServiceContext pipe : pipes.values()) {
       // Time based flushing
       if (pipe.shouldFlush()) {
         pipe.flushBuffer();
       }
     }
+  }
+
+  private Pair<String, String> getOffsets(Collection<SinkRecord> records) {
+    if (isNull(records) || records.isEmpty()) {
+      return Pair.of("<empty>", "<empty>");
+    }
+
+    String first =
+        records.stream()
+            .map(SinkRecord::kafkaOffset)
+            .reduce(Long::min)
+            .map(String::valueOf)
+            .orElse("<empty>");
+
+    String last =
+        records.stream()
+            .map(SinkRecord::kafkaOffset)
+            .reduce(Long::max)
+            .map(String::valueOf)
+            .orElse("<empty>");
+
+    return Pair.of(first, last);
   }
 
   @Override
@@ -223,6 +266,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
           Utils.tableName(record.topic(), this.topic2TableMap),
           new TopicPartition(record.topic(), record.kafkaPartition()));
     }
+    LOGGER.trace("Inserting record for pipe {} with offset {}", nameIndex, record.kafkaOffset());
     pipes.get(nameIndex).insert(record);
   }
 
@@ -306,7 +350,6 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     return this.isStopped;
   }
 
-  @Override
   public void setRecordNumber(final long num) {
     if (num < 0) {
       LOGGER.error("number of record in each file is {}, it is negative, reset to" + " 0");
@@ -317,7 +360,6 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     }
   }
 
-  @Override
   public void setFileSize(final long size) {
     if (size < SnowflakeSinkConnectorConfig.BUFFER_SIZE_BYTES_MIN) {
       LOGGER.error(
@@ -332,7 +374,6 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     }
   }
 
-  @Override
   public void setFlushTime(final long time) {
     if (time < SnowflakeSinkConnectorConfig.BUFFER_FLUSH_TIME_SEC_MIN) {
       LOGGER.error(
@@ -347,32 +388,26 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     }
   }
 
-  @Override
   public void setTopic2TableMap(Map<String, String> topic2TableMap) {
     this.topic2TableMap = topic2TableMap;
   }
 
-  @Override
   public void setMetadataConfig(SnowflakeMetadataConfig configMap) {
     this.recordService.setMetadataConfig(configMap);
   }
 
-  @Override
-  public long getRecordNumber() {
+  private long getRecordNumber() {
     return this.recordNum;
   }
 
-  @Override
-  public long getFlushTime() {
+  private long getFlushTime() {
     return this.flushTime;
   }
 
-  @Override
-  public long getFileSize() {
+  private long getFileSize() {
     return this.fileSize;
   }
 
-  @Override
   public void setBehaviorOnNullValuesConfig(
       SnowflakeSinkConnectorConfig.BehaviorOnNullValues behavior) {
     this.behaviorOnNullValues = behavior;
@@ -380,21 +415,14 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
   // enable use of new stage files processor
   void enableStageFilesProcessor(int threadCount) {
-    this.useStageFilesProcessor = true;
     if (cleanerServiceExecutor != null) {
       cleanerServiceExecutor.shutdown();
     }
     cleanerServiceExecutor = new ScheduledThreadPoolExecutor(Math.max(1, threadCount));
   }
 
-  @Override
   public void setCustomJMXMetrics(boolean enableJMX) {
     this.enableCustomJMXMonitoring = enableJMX;
-  }
-
-  @Override
-  public SnowflakeSinkConnectorConfig.BehaviorOnNullValues getBehaviorOnNullValuesConfig() {
-    return this.behaviorOnNullValues;
   }
 
   /**
@@ -450,6 +478,10 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     }
   }
 
+  public void configureEnableReprocessFilesCleanup(boolean enable) {
+    enableReprocessFilesCleanup = enable;
+  }
+
   private class ServiceContext {
     private final String tableName;
     private final String stageName;
@@ -502,7 +534,8 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
         String topicName,
         SnowflakeConnectionService conn,
         int partition,
-        ScheduledExecutorService v2CleanerExecutor) {
+        ScheduledExecutorService v2CleanerExecutor,
+        long v2CleanerIntervalSeconds) {
       this.pipeName = pipeName;
       this.tableName = generatedTableName.getName();
       this.stageName = stageName;
@@ -562,6 +595,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
       this.useStageFilesProcessor = v2CleanerExecutor != null;
       if (useStageFilesProcessor) {
+        LOGGER.info("Using StageFileProcessor");
 
         StageFilesProcessor processor =
             new StageFilesProcessor(
@@ -575,11 +609,14 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
                 ingestionService,
                 pipeStatus,
                 telemetryService,
-                v2CleanerExecutor);
+                v2CleanerExecutor,
+                v2CleanerIntervalSeconds);
         this.stageFileProcessorClient = processor.trackFilesAsync();
         this.cleanerExecutor = null;
         this.reprocessCleanerExecutor = null;
       } else {
+        LOGGER.info("Using cleaner executor");
+
         this.cleanerExecutor = Executors.newSingleThreadExecutor();
         this.reprocessCleanerExecutor = Executors.newSingleThreadExecutor();
         this.stageFileProcessorClient = null;
@@ -600,6 +637,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
       if (!useStageFilesProcessor) {
         try {
+          LOGGER.info("Starting cleaner with offset: {}", recordOffset);
           startCleaner(recordOffset, pipeCreation);
         } catch (Exception e) {
           LOGGER.warn("Cleaner and Flusher threads shut down before initialization");
@@ -626,6 +664,12 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
         }
         forceCleanerFileReset = false;
         LOGGER.warn("Resetting cleaner files {} done", pipeName);
+        if (LOGGER.isInfoEnabled()) {
+          LOGGER.info(
+              "For pipe {} cleaner files after reset: {}",
+              pipeName,
+              String.join(", ", cleanerFileNames));
+        }
       } catch (Throwable t) {
         LOGGER.warn("Cleaner file reset encountered an error:\n{}", t.getMessage());
       }
@@ -641,7 +685,9 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
       List<String> currentFilesOnStage = conn.listStage(stageName, prefix);
       List<String> reprocessFiles = new ArrayList<>();
 
-      filterFileReprocess(currentFilesOnStage, reprocessFiles, recordOffset);
+      if (enableReprocessFilesCleanup) {
+        filterFileReprocess(currentFilesOnStage, reprocessFiles, recordOffset);
+      }
 
       // Telemetry
       pipeCreation.setFileCountRestart(currentFilesOnStage.size());
@@ -686,7 +732,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
             }
           });
 
-      if (reprocessFiles.size() > 0) {
+      if (enableReprocessFilesCleanup && reprocessFiles.size() > 0) {
         // After we start the cleaner thread, delay a while and start deleting files.
         reprocessCleanerExecutor.submit(
             () -> {
@@ -753,6 +799,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     private void insert(final SinkRecord record) {
       // init pipe
       if (!hasInitialized) {
+        LOGGER.info("Initializing with offset: {}", record.kafkaOffset());
         // This will only be called once at the beginning when an offset arrives for first time
         // after connector starts/rebalance
         init(record.kafkaOffset());
@@ -764,14 +811,18 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
       if (record.kafkaOffset() > processedOffset.get()) {
         SinkRecord snowflakeRecord = record;
         if (shouldConvertContent(snowflakeRecord.value())) {
+          LOGGER.trace("Converting native record value, offset: {}", snowflakeRecord.kafkaOffset());
           snowflakeRecord = handleNativeRecord(snowflakeRecord, false);
         }
         if (shouldConvertContent(snowflakeRecord.key())) {
+          LOGGER.trace("Converting native record key, offset: {}", snowflakeRecord.kafkaOffset());
           snowflakeRecord = handleNativeRecord(snowflakeRecord, true);
         }
 
         // broken record
         if (isRecordBroken(snowflakeRecord)) {
+          LOGGER.warn(
+              "Writing broken record to a table stage, offset: {},", snowflakeRecord.kafkaOffset());
           writeBrokenDataToTableStage(snowflakeRecord);
           // don't move committed offset in this case
           // only move it in the normal cases
@@ -790,6 +841,9 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
             buffer.insert(snowflakeRecord);
             if (buffer.getBufferSizeBytes() >= getFileSize()
                 || (getRecordNumber() != 0 && buffer.getNumOfRecords() >= getRecordNumber())) {
+              LOGGER.info(
+                  "Buffer ready to flush, moving content to a temporary buffer, buffer details: {}",
+                  buffer);
               tmpBuff = buffer;
               this.buffer = new SnowpipeBuffer();
             }
@@ -798,6 +852,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
           }
 
           if (useStageFilesProcessor) {
+            LOGGER.trace("Assigning {} offset to StageFileProcessor", record.kafkaOffset());
             stageFileProcessorClient.newOffset(record.kafkaOffset());
           }
 
@@ -864,10 +919,22 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
     }
 
     private void flushBuffer() {
+
       // Just checking buffer size, no atomic operation required
       if (buffer.isEmpty()) {
+        LOGGER.info(
+            "Buffer for pipe: {}, tableName: {}, stageName: {}, nothing to be flushed",
+            pipeName,
+            tableName,
+            stageName);
         return;
       }
+
+      LOGGER.info(
+          "Flushing buffer for pipe: {}, tableName: {}, stageName: {}",
+          pipeName,
+          tableName,
+          stageName);
       SnowpipeBuffer tmpBuff;
       bufferLock.lock();
       try {
@@ -877,6 +944,12 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
         bufferLock.unlock();
       }
       flush(tmpBuff);
+
+      LOGGER.info(
+          "Buffer flushed for pipe: {}, tableName: {}, stageName: {}",
+          pipeName,
+          tableName,
+          stageName);
     }
 
     private void writeBrokenDataToTableStage(SinkRecord record) {
@@ -906,7 +979,9 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
     private long getOffset() {
       if (fileNames.isEmpty()) {
-        return committedOffset.get();
+        long offsetToReturn = committedOffset.get();
+        LOGGER.info("No files to commit, returning {} offset", offsetToReturn);
+        return offsetToReturn;
       }
 
       List<String> fileNamesCopy = new ArrayList<>();
@@ -924,8 +999,13 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
       ingestionService.ingestFiles(fileNamesCopy);
 
+      LOGGER.info("pipe {}, ingested files: {}", pipeName, fileNamesCopy);
+
       // committedOffset should be updated only when ingestFiles has succeeded.
-      committedOffset.set(flushedOffset.get());
+      long flushedOffset = this.flushedOffset.get();
+      LOGGER.info("Setting commitedOffset to {}", flushedOffset);
+      committedOffset.set(flushedOffset);
+
       // update telemetry data
       long currentTime = System.currentTimeMillis();
       pipeStatus.setCommittedOffset(committedOffset.get() - 1);
@@ -939,6 +1019,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
 
     private void flush(final SnowpipeBuffer buff) {
       if (buff == null || buff.isEmpty()) {
+        LOGGER.info("Buffer empty, nothing to be flushed");
         return;
       }
       this.previousFlushTimeStamp = System.currentTimeMillis();
@@ -947,6 +1028,7 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
       // SnowflakeThreadPoolUtils.flusherThreadPool.submit(
       String fileName = FileNameUtils.fileName(prefix, buff.getFirstOffset(), buff.getLastOffset());
       String content = buff.getData();
+      LOGGER.info("Putting buffer to stage: {}", fileName);
       conn.putWithCache(stageName, fileName, content);
 
       // compute metrics which will be exported to JMX for now.
@@ -1132,6 +1214,8 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
         LOGGER.info("pipe {}, recovered from existing pipe", pipeName);
         pipeCreation.setReusePipe(true);
       } else {
+        LOGGER.info(
+            "Creating pipe {} for stageName: {}, tableName: {}", pipeName, stageName, tableName);
         conn.createPipe(tableName, stageName, pipeName);
       }
     }
@@ -1183,10 +1267,6 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
         LOGGER.info("Creating new stage {}.", stageName);
         conn.createStage(stageName);
       }
-    }
-
-    private boolean isBufferEmpty() {
-      return this.buffer.isEmpty();
     }
 
     /**
@@ -1269,18 +1349,37 @@ class SnowflakeSinkServiceV1 implements SnowflakeSinkService {
             "SnowflakeSinkServiceV1 doesnt support getSinkRecords method");
       }
     }
-  }
 
-  /**
-   * Only used for testing Given a pipename, find out if buffer for this pipe has any data inserted.
-   *
-   * @param pipeName
-   * @return
-   */
-  protected boolean isPartitionBufferEmpty(final String pipeName) {
-    if (pipes.containsKey(pipeName)) {
-      return pipes.get(pipeName).isBufferEmpty();
+    @Override
+    public String toString() {
+      return "ServiceContext{"
+          + "tableName='"
+          + tableName
+          + '\''
+          + ", stageName='"
+          + stageName
+          + '\''
+          + ", pipeName='"
+          + pipeName
+          + '\''
+          + ", fileNames="
+          + Arrays.toString(fileNames.toArray())
+          + ", prefix='"
+          + prefix
+          + '\''
+          + ", committedOffset="
+          + committedOffset
+          + ", flushedOffset="
+          + flushedOffset
+          + ", processedOffset="
+          + processedOffset
+          + ", previousFlushTimeStamp="
+          + previousFlushTimeStamp
+          + ", useStageFilesProcessor="
+          + useStageFilesProcessor
+          + ", hasInitialized="
+          + hasInitialized
+          + '}';
     }
-    return false;
   }
 }

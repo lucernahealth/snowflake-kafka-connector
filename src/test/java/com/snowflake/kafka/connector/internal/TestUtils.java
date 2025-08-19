@@ -31,8 +31,6 @@ import static com.snowflake.kafka.connector.Utils.getSnowflakeOAuthToken;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
 import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
 import com.snowflake.kafka.connector.Utils;
 import com.snowflake.kafka.connector.config.SnowflakeSinkConnectorConfigBuilder;
@@ -61,9 +59,6 @@ import java.util.Random;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import net.snowflake.client.jdbc.internal.apache.http.HttpHeaders;
 import net.snowflake.client.jdbc.internal.apache.http.client.methods.CloseableHttpResponse;
 import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpPost;
@@ -81,7 +76,6 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 import org.apache.kafka.connect.sink.SinkRecord;
-import org.junit.jupiter.params.provider.Arguments;
 
 public class TestUtils {
   // test profile properties
@@ -300,18 +294,6 @@ public class TestUtils {
     return configuration;
   }
 
-  public static Map<String, String> getConfForStreaming(boolean useSingleBuffer) {
-    Map<String, String> config = getConfForStreaming();
-
-    if (useSingleBuffer) {
-      config.put(
-          SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-          Boolean.TRUE.toString());
-    }
-
-    return config;
-  }
-
   /* Get configuration map from profile path. Used against prod deployment of Snowflake */
   public static Map<String, String> getConfForStreamingWithOAuth() {
     Map<String, String> configuration = getConfWithOAuth();
@@ -326,18 +308,6 @@ public class TestUtils {
     configuration.put(SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_MAX_CLIENT_LAG, "10");
 
     return configuration;
-  }
-
-  public static Map<String, String> getConfForStreamingWithOAuth(boolean useSingleBuffer) {
-    Map<String, String> config = getConfForStreamingWithOAuth();
-
-    if (useSingleBuffer) {
-      config.put(
-          SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-          Boolean.TRUE.toString());
-    }
-
-    return config;
   }
 
   /** @return JDBC config with encrypted private key */
@@ -482,6 +452,10 @@ public class TestUtils {
     String query = "drop table if exists " + tableName;
 
     executeQuery(query);
+  }
+
+  public static void dropPipe(String pipeName) {
+    executeQuery("drop pipe if exists " + pipeName);
   }
 
   /** Select * from table */
@@ -960,6 +934,13 @@ public class TestUtils {
     return contentMap;
   }
 
+  public static int getNumberOfRows(String tableName) throws SQLException {
+    String getRowQuery = "select count(*) from " + tableName;
+    ResultSet result = executeQuery(getRowQuery);
+    result.next();
+    return result.getInt(1);
+  }
+
   /**
    * Get refresh token using username, password, clientId and clientSecret
    *
@@ -1052,15 +1033,5 @@ public class TestUtils {
     } catch (UnsupportedEncodingException e) {
       throw new RuntimeException(e);
     }
-  }
-
-  public static Stream<Arguments> nBooleanProduct(int n) {
-    return Sets.cartesianProduct(
-            IntStream.range(0, n)
-                .mapToObj(i -> ImmutableSet.of(false, true))
-                .collect(Collectors.toList()))
-        .stream()
-        .map(List::toArray)
-        .map(Arguments::of);
   }
 }

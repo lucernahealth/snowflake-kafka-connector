@@ -263,6 +263,17 @@ public abstract class SnowflakeTelemetryService {
         userProvidedConfig.getOrDefault(
             ENABLE_SCHEMATIZATION_CONFIG, ENABLE_SCHEMATIZATION_DEFAULT));
 
+    dataObjectNode.put(
+        SNOWPIPE_STREAMING_V2_ENABLED,
+        userProvidedConfig.getOrDefault(
+            SNOWPIPE_STREAMING_V2_ENABLED,
+            String.valueOf(SNOWPIPE_STREAMING_V2_ENABLED_DEFAULT_VALUE)));
+
+    dataObjectNode.put(
+        ICEBERG_ENABLED,
+        userProvidedConfig.getOrDefault(
+            ICEBERG_ENABLED, String.valueOf(ICEBERG_ENABLED_DEFAULT_VALUE)));
+
     // Record whether streaming client optimization is enabled
     dataObjectNode.put(
         ENABLE_STREAMING_CLIENT_OPTIMIZATION_CONFIG,
@@ -284,13 +295,6 @@ public abstract class SnowflakeTelemetryService {
       dataObjectNode.put(
           SNOWPIPE_STREAMING_CLIENT_PROVIDER_OVERRIDE_MAP,
           userProvidedConfig.get(SNOWPIPE_STREAMING_CLIENT_PROVIDER_OVERRIDE_MAP));
-    }
-    if (userProvidedConfig.containsKey(SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER)) {
-      dataObjectNode.put(
-          SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-          userProvidedConfig.getOrDefault(
-              SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-              String.valueOf(SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER_DEFAULT)));
     }
   }
 

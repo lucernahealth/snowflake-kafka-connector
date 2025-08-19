@@ -1,8 +1,7 @@
 package com.snowflake.kafka.connector;
 
-import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.BEHAVIOR_ON_NULL_VALUES_CONFIG;
+import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.*;
 import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.BehaviorOnNullValues.VALIDATOR;
-import static com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig.JMX_OPT;
 import static com.snowflake.kafka.connector.Utils.*;
 
 import com.google.common.collect.ImmutableMap;
@@ -86,15 +85,6 @@ public class DefaultConnectorConfigValidator implements ConnectorConfigValidator
             Utils.formatString(
                 "{} is only available with ingestion type: {}.",
                 SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_MAX_MEMORY_LIMIT_IN_BYTES,
-                IngestionMethodConfig.SNOWPIPE_STREAMING.toString()));
-      }
-      if (config.containsKey(
-          SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER)) {
-        invalidConfigParams.put(
-            SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-            Utils.formatString(
-                "{} is only available with ingestion type: {}.",
-                SnowflakeSinkConnectorConfig.SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
                 IngestionMethodConfig.SNOWPIPE_STREAMING.toString()));
       }
       if (config.containsKey(
@@ -260,6 +250,17 @@ public class DefaultConnectorConfigValidator implements ConnectorConfigValidator
           || config.get(JMX_OPT).equalsIgnoreCase("false"))) {
         invalidConfigParams.put(
             JMX_OPT, Utils.formatString("Kafka config:{} should either be true or false", JMX_OPT));
+      }
+    }
+
+    if (config.containsKey(SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP)) {
+      if (!(config.get(SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP).equalsIgnoreCase("true")
+          || config.get(SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP).equalsIgnoreCase("false"))) {
+        invalidConfigParams.put(
+            SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP,
+            Utils.formatString(
+                "Kafka config:{} should either be true or false",
+                SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP));
       }
     }
 

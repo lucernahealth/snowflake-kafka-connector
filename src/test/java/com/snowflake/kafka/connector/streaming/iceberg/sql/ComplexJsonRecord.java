@@ -5,9 +5,7 @@ import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKN
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableList;
 import com.snowflake.kafka.connector.Utils;
-import com.snowflake.kafka.connector.streaming.iceberg.sql.MetadataRecord.RecordWithMetadata;
 import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -28,11 +26,11 @@ public class ComplexJsonRecord {
           0.5,
           0.25,
           true,
-          ImmutableList.of(1, 2, 3),
-          ImmutableList.of("a", "b", "c"),
-          ImmutableList.of(true),
-          ImmutableList.of(1, 4),
-          ImmutableList.of(ImmutableList.of(7, 8, 9), ImmutableList.of(10, 11, 12)),
+          List.of(1, 2, 3),
+          List.of("a", "b", "c"),
+          List.of(true),
+          List.of(1, 4),
+          List.of(List.of(7, 8, 9), List.of(10, 11, 12)),
           PrimitiveJsonRecord.primitiveJsonRecordValueExample,
           PrimitiveJsonRecord.primitiveJsonRecordValueExample);
 
@@ -313,7 +311,7 @@ public class ComplexJsonRecord {
       while (resultSet.next()) {
         String jsonString = resultSet.getString(Utils.TABLE_COLUMN_CONTENT);
         ComplexJsonRecord record = MAPPER.readValue(jsonString, ComplexJsonRecord.class);
-        MetadataRecord metadata = MetadataRecord.fromMetadataSingleRow(resultSet);
+        MetadataRecord metadata = PrimitiveJsonRecord.fromMetadataSingleRow(resultSet);
         records.add(RecordWithMetadata.of(metadata, record));
       }
     } catch (SQLException | IOException e) {

@@ -1,6 +1,5 @@
 package com.snowflake.kafka.connector.internal.streaming.channel;
 
-import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import net.snowflake.ingest.utils.SFException;
@@ -59,7 +58,17 @@ public interface TopicPartitionChannel extends ExposingInternalsTopicPartitionCh
    *
    * @return (offsetToken present in Snowflake + 1), else -1
    */
-  long getOffsetSafeToCommitToKafka();
+  default long getOffsetSafeToCommitToKafka() {
+    final long committedOffsetInSnowflake = fetchOffsetTokenWithRetry();
+    if (committedOffsetInSnowflake == NO_OFFSET_TOKEN_REGISTERED_IN_SNOWFLAKE) {
+      return NO_OFFSET_TOKEN_REGISTERED_IN_SNOWFLAKE;
+    } else {
+      // Return an offset which is + 1 of what was present in snowflake.
+      // Idea of sending + 1 back to Kafka is that it should start sending offsets after task
+      // restart from this offset
+      return committedOffsetInSnowflake + 1;
+    }
+  }
 
   /**
    * Close channel associated to this partition Not rethrowing connect exception because the
@@ -81,19 +90,9 @@ public interface TopicPartitionChannel extends ExposingInternalsTopicPartitionCh
 
   String getChannelNameFormatV1();
 
-  // todo it should belong to a buffered channel
-  /**
-   * If difference between current time and previous flush time is more than threshold, insert the
-   * buffered Rows.
-   *
-   * <p>Note: We acquire buffer lock since we copy the buffer.
-   *
-   * <p>Threshold is config parameter: {@link SnowflakeSinkConnectorConfig#BUFFER_FLUSH_TIME_SEC}
-   *
-   * <p>Previous flush time here means last time we called insertRows API with rows present in
-   */
-  void insertBufferedRecordsIfFlushTimeThresholdReached();
+  void setLatestConsumerGroupOffset(long consumerOffset);
 
-  // todo it should belong to a buffered channel
-  void setLatestConsumerOffset(long consumerOffset);
+  default CompletableFuture<Void> waitForLastProcessedRecordCommitted() {
+    return CompletableFuture.completedFuture(null);
+  }
 }

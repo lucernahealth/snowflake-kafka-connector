@@ -27,7 +27,12 @@ import com.snowflake.kafka.connector.internal.SnowflakeErrors;
 import com.snowflake.kafka.connector.internal.SnowflakeSinkService;
 import com.snowflake.kafka.connector.internal.SnowflakeSinkServiceFactory;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
+import com.snowflake.kafka.connector.internal.streaming.SnowflakeSinkServiceV2;
+import com.snowflake.kafka.connector.internal.streaming.schemaevolution.SchemaEvolutionService;
+import com.snowflake.kafka.connector.internal.streaming.schemaevolution.iceberg.IcebergSchemaEvolutionService;
+import com.snowflake.kafka.connector.internal.streaming.schemaevolution.snowflake.SnowflakeSchemaEvolutionService;
 import com.snowflake.kafka.connector.records.SnowflakeMetadataConfig;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -219,18 +224,36 @@ public class SnowflakeSinkTask extends SinkTask {
       this.sink.closeAll();
     }
     this.ingestionMethodConfig = ingestionType;
-    this.sink =
-        SnowflakeSinkServiceFactory.builder(getConnection(), ingestionType, parsedConfig)
-            .setFileSize(bufferSizeBytes)
-            .setRecordNumber(bufferCountRecords)
-            .setFlushTime(bufferFlushTime)
-            .setTopic2TableMap(topic2table)
-            .setMetadataConfig(metadataConfig)
-            .setBehaviorOnNullValuesConfig(behavior)
-            .setCustomJMXMetrics(enableCustomJMXMonitoring)
-            .setErrorReporter(kafkaRecordErrorReporter)
-            .setSinkTaskContext(this.context)
-            .build();
+    if (ingestionType == IngestionMethodConfig.SNOWPIPE) {
+      this.sink =
+          SnowflakeSinkServiceFactory.builder(getConnection(), parsedConfig)
+              .setFileSize(bufferSizeBytes)
+              .setRecordNumber(bufferCountRecords)
+              .setFlushTime(bufferFlushTime)
+              .setTopic2TableMap(topic2table)
+              .setMetadataConfig(metadataConfig)
+              .setBehaviorOnNullValuesConfig(behavior)
+              .setCustomJMXMetrics(enableCustomJMXMonitoring)
+              .setErrorReporter(kafkaRecordErrorReporter)
+              .setSinkTaskContext(this.context)
+              .build();
+    } else {
+      SchemaEvolutionService schemaEvolutionService =
+          Utils.isIcebergEnabled(parsedConfig)
+              ? new IcebergSchemaEvolutionService(conn)
+              : new SnowflakeSchemaEvolutionService(conn);
+
+      this.sink =
+          new SnowflakeSinkServiceV2(
+              conn,
+              parsedConfig,
+              kafkaRecordErrorReporter,
+              this.context,
+              enableCustomJMXMonitoring,
+              topic2table,
+              behavior,
+              schemaEvolutionService);
+    }
 
     DYNAMIC_LOGGER.info(
         "task started, execution time: {} milliseconds",
@@ -302,6 +325,7 @@ public class SnowflakeSinkTask extends SinkTask {
     this.authorizationExceptionTracker.throwExceptionIfAuthorizationFailed();
 
     final long recordSize = records.size();
+    DYNAMIC_LOGGER.debug("Calling PUT with {} records", recordSize);
     if (enableRebalancing && recordSize > 0) {
       processRebalancingTest();
     }
@@ -311,7 +335,7 @@ public class SnowflakeSinkTask extends SinkTask {
     getSink().insert(records);
 
     logWarningForPutAndPrecommit(
-        startTime, Utils.formatString("called PUT with {} records", recordSize));
+        startTime, Utils.formatString("called PUT with {} records", recordSize), false);
   }
 
   /**
@@ -327,6 +351,13 @@ public class SnowflakeSinkTask extends SinkTask {
   @Override
   public Map<TopicPartition, OffsetAndMetadata> preCommit(
       Map<TopicPartition, OffsetAndMetadata> offsets) throws RetriableException {
+    DYNAMIC_LOGGER.info("Precommit started for {} partitions", offsets.size());
+
+    if (DYNAMIC_LOGGER.isDebugEnabled()) {
+      DYNAMIC_LOGGER.debug(
+          "Precommit partitions and offsets: {}", Arrays.toString(offsets.entrySet().toArray()));
+    }
+
     long startTime = System.currentTimeMillis();
 
     // return an empty map means that offset commitment is not desired
@@ -361,7 +392,8 @@ public class SnowflakeSinkTask extends SinkTask {
         Utils.formatString(
             "called PRECOMMIT on all {} partitions, safe to commit {} partitions",
             offsets.size(),
-            committedOffsets.size()));
+            committedOffsets.size()),
+        true);
     return committedOffsets;
   }
 
@@ -410,7 +442,7 @@ public class SnowflakeSinkTask extends SinkTask {
     return currTime - startTime;
   }
 
-  void logWarningForPutAndPrecommit(long startTime, String logContent) {
+  void logWarningForPutAndPrecommit(long startTime, String logContent, boolean isPrecommit) {
     final long executionTimeMs = getDurationFromStartMs(startTime);
     String logExecutionContent =
         Utils.formatString("{}, executionTime: {} ms", logContent, executionTimeMs);
@@ -426,7 +458,11 @@ public class SnowflakeSinkTask extends SinkTask {
           logExecutionContent,
           executionTimeMs);
     } else {
-      this.DYNAMIC_LOGGER.debug("Successfully " + logExecutionContent);
+      if (isPrecommit) {
+        this.DYNAMIC_LOGGER.info("Successfully " + logExecutionContent);
+      } else {
+        this.DYNAMIC_LOGGER.debug("Successfully " + logExecutionContent);
+      }
     }
   }
 

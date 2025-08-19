@@ -19,7 +19,6 @@ package com.snowflake.kafka.connector;
 import static com.snowflake.kafka.connector.Utils.isSnowpipeStreamingIngestion;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableSet;
 import com.snowflake.kafka.connector.internal.KCLogger;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
 import java.util.Arrays;
@@ -117,9 +116,21 @@ public class SnowflakeSinkConnectorConfig {
   public static final String SNOWPIPE_FILE_CLEANER_FIX_ENABLED =
       "snowflake.snowpipe.v2CleanerEnabled";
   public static final String SNOWPIPE_FILE_CLEANER_THREADS = "snowflake.snowpipe.v2CleanerThreads";
+  // how often to run v2 cleaner
+  // low value may cause hitting "too many requests - 429 status code" while querying the internal
+  // stage
+  // setting it higher may be cost-effective when no messages land on a partition
+  // (https://snowflakecomputing.atlassian.net/browse/SNOW-1904571)
+  public static final String SNOWPIPE_FILE_CLEANER_INTERVAL_SECONDS =
+      "snowflake.snowpipe.v2CleanerIntervalSeconds";
 
   public static final boolean SNOWPIPE_FILE_CLEANER_FIX_ENABLED_DEFAULT = true;
   public static final int SNOWPIPE_FILE_CLEANER_THREADS_DEFAULT = 1;
+  public static final long SNOWPIPE_FILE_CLEANER_INTERVAL_SECONDS_DEFAULT = 61;
+
+  public static final String SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP =
+      "snowflake.snowpipe.v1Cleaner.enable.reprocessFiles.cleanup";
+  public static final boolean SNOWPIPE_ENABLE_REPROCESS_FILES_CLEANUP_DEFAULT = true;
 
   public static final String SNOWPIPE_SINGLE_TABLE_MULTIPLE_TOPICS_FIX_ENABLED =
       "snowflake.snowpipe.stageFileNameExtensionEnabled";
@@ -130,14 +141,9 @@ public class SnowflakeSinkConnectorConfig {
       "snowflake.streaming.closeChannelsInParallel.enabled";
   public static final boolean SNOWPIPE_STREAMING_CLOSE_CHANNELS_IN_PARALLEL_DEFAULT = true;
 
-  // This is the streaming max client lag which can be defined in config
-  public static final String SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER =
-      "snowflake.streaming.enable.single.buffer";
-
-  public static final boolean SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER_DEFAULT = true;
   public static final String SNOWPIPE_STREAMING_MAX_CLIENT_LAG =
       "snowflake.streaming.max.client.lag";
-  public static final int SNOWPIPE_STREAMING_MAX_CLIENT_LAG_SECONDS_DEFAULT = 120;
+  public static final int SNOWPIPE_STREAMING_MAX_CLIENT_LAG_SECONDS_DEFAULT = 30;
 
   public static final String SNOWPIPE_STREAMING_MAX_MEMORY_LIMIT_IN_BYTES =
       "snowflake.streaming.max.memory.limit.bytes";
@@ -148,6 +154,9 @@ public class SnowflakeSinkConnectorConfig {
   // Iceberg
   public static final String ICEBERG_ENABLED = "snowflake.streaming.iceberg.enabled";
   public static final boolean ICEBERG_ENABLED_DEFAULT_VALUE = false;
+
+  public static final String SNOWPIPE_STREAMING_V2_ENABLED = "snowflake.streaming.v2.enabled";
+  public static final boolean SNOWPIPE_STREAMING_V2_ENABLED_DEFAULT_VALUE = false;
 
   // TESTING
   public static final String REBALANCING = "snowflake.test.rebalancing";
@@ -241,7 +250,7 @@ public class SnowflakeSinkConnectorConfig {
       "value.converter.schema.registry.url";
 
   public static final Set<String> CUSTOM_SNOWFLAKE_CONVERTERS =
-      ImmutableSet.of(
+      Set.of(
           "com.snowflake.kafka.connector.records.SnowflakeJsonConverter",
           "com.snowflake.kafka.connector.records.SnowflakeAvroConverterWithoutSchemaRegistry",
           "com.snowflake.kafka.connector.records.SnowflakeAvroConverter");
@@ -255,12 +264,6 @@ public class SnowflakeSinkConnectorConfig {
         config, BUFFER_FLUSH_TIME_SEC, BUFFER_FLUSH_TIME_SEC_DEFAULT, "seconds");
 
     if (isSnowpipeStreamingIngestion(config)) {
-      setFieldToDefaultValues(
-          config,
-          SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER,
-          SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER_DEFAULT,
-          "");
-
       setFieldToDefaultValues(
           config,
           SNOWPIPE_STREAMING_MAX_CLIENT_LAG,

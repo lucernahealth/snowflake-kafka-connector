@@ -9,13 +9,13 @@ import static com.snowflake.kafka.connector.internal.streaming.ChannelMigrationR
 import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
 import com.snowflake.kafka.connector.Utils;
 import com.snowflake.kafka.connector.dlq.InMemoryKafkaRecordErrorReporter;
-import com.snowflake.kafka.connector.internal.streaming.BufferedTopicPartitionChannel;
 import com.snowflake.kafka.connector.internal.streaming.ChannelMigrateOffsetTokenResponseDTO;
 import com.snowflake.kafka.connector.internal.streaming.ChannelMigrationResponseCode;
+import com.snowflake.kafka.connector.internal.streaming.DirectTopicPartitionChannel;
 import com.snowflake.kafka.connector.internal.streaming.InMemorySinkTaskContext;
 import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
 import com.snowflake.kafka.connector.internal.streaming.SnowflakeSinkServiceV2;
-import com.snowflake.kafka.connector.internal.streaming.StreamingBufferThreshold;
+import com.snowflake.kafka.connector.internal.streaming.StreamingSinkServiceBuilder;
 import com.snowflake.kafka.connector.internal.streaming.channel.TopicPartitionChannel;
 import com.snowflake.kafka.connector.internal.streaming.schemaevolution.InsertErrorMapper;
 import com.snowflake.kafka.connector.internal.streaming.schemaevolution.snowflake.SnowflakeSchemaEvolutionService;
@@ -37,8 +37,6 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 public class ConnectionServiceIT {
   private final SnowflakeConnectionService conn = TestUtils.getConnectionService();
@@ -437,10 +435,9 @@ public class ConnectionServiceIT {
     assert service.isClosed();
   }
 
-  @ParameterizedTest(name = "useSingleBuffer: {0}")
-  @ValueSource(booleans = {false, true})
-  public void testStreamingChannelOffsetMigration(boolean useSingleBuffer) {
-    Map<String, String> testConfig = TestUtils.getConfForStreaming(useSingleBuffer);
+  @Test
+  public void testStreamingChannelOffsetMigration() {
+    Map<String, String> testConfig = TestUtils.getConfForStreaming();
     SnowflakeConnectionService conn =
         SnowflakeConnectionServiceFactory.builder().setProperties(testConfig).build();
     conn.createTable(tableName);
@@ -462,10 +459,9 @@ public class ConnectionServiceIT {
 
     try {
       // ### TEST 2 - Table doesnt exist
-      channelMigrateOffsetTokenResponseDTO =
-          conn.migrateStreamingChannelOffsetToken(
-              tableName + "_Table_DOESNT_EXIST", sourceChannelName, destinationChannelName);
-    } catch (SnowflakeKafkaConnectorException ex) {
+      conn.migrateStreamingChannelOffsetToken(
+          tableName + "_Table_DOESNT_EXIST", sourceChannelName, destinationChannelName);
+    } catch (SnowflakeConnectionServiceV1.OffsetTokenMigrationRetryableException ex) {
       assert ex.getMessage()
           .contains(
               ChannelMigrationResponseCode.ERR_TABLE_DOES_NOT_EXIST_NOT_AUTHORIZED.getMessage());
@@ -473,22 +469,17 @@ public class ConnectionServiceIT {
 
     try {
       // ### TEST 3 - Source Channel (v2 channel doesnt exist)
-      Map<String, String> config = TestUtils.getConfForStreaming(useSingleBuffer);
+      Map<String, String> config = TestUtils.getConfForStreaming();
       SnowflakeSinkConnectorConfig.setDefaultValues(config);
       TopicPartition topicPartition = new TopicPartition(tableName, 0);
 
-      InMemorySinkTaskContext inMemorySinkTaskContext =
-          new InMemorySinkTaskContext(Collections.singleton(topicPartition));
-
       // This will automatically create a channel for topicPartition.
-      SnowflakeSinkService service =
-          SnowflakeSinkServiceFactory.builder(
-                  conn, IngestionMethodConfig.SNOWPIPE_STREAMING, config)
-              .setRecordNumber(1)
-              .setErrorReporter(new InMemoryKafkaRecordErrorReporter())
-              .setSinkTaskContext(inMemorySinkTaskContext)
-              .addTask(tableName, topicPartition)
+      SnowflakeSinkServiceV2 service =
+          StreamingSinkServiceBuilder.builder(conn, config)
+              .withSinkTaskContext(
+                  new InMemorySinkTaskContext(Collections.singleton(topicPartition)))
               .build();
+      service.startPartition(tableName, topicPartition);
 
       final long noOfRecords = 10;
 
@@ -519,14 +510,12 @@ public class ConnectionServiceIT {
       // step 3: do a migration and check if destination channel has expected offset
 
       // Ctor of TopicPartitionChannel tries to open the channel.
-      SnowflakeSinkServiceV2 snowflakeSinkServiceV2 = (SnowflakeSinkServiceV2) service;
       TopicPartitionChannel newChannelFormatV2 =
-          new BufferedTopicPartitionChannel(
-              snowflakeSinkServiceV2.getStreamingIngestClient(),
+          new DirectTopicPartitionChannel(
+              service.getStreamingIngestClient(),
               topicPartition,
               sourceChannelName,
               tableName,
-              new StreamingBufferThreshold(10, 10_000, 1),
               config,
               new InMemoryKafkaRecordErrorReporter(),
               new InMemorySinkTaskContext(Collections.singleton(topicPartition)),

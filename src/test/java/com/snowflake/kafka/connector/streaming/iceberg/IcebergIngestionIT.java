@@ -6,13 +6,13 @@ import static com.snowflake.kafka.connector.internal.TestUtils.getConfForStreami
 import com.snowflake.kafka.connector.SnowflakeSinkConnectorConfig;
 import com.snowflake.kafka.connector.dlq.InMemoryKafkaRecordErrorReporter;
 import com.snowflake.kafka.connector.internal.SnowflakeSinkService;
-import com.snowflake.kafka.connector.internal.SnowflakeSinkServiceFactory;
 import com.snowflake.kafka.connector.internal.TestUtils;
 import com.snowflake.kafka.connector.internal.streaming.InMemorySinkTaskContext;
-import com.snowflake.kafka.connector.internal.streaming.IngestionMethodConfig;
+import com.snowflake.kafka.connector.internal.streaming.StreamingSinkServiceBuilder;
+import com.snowflake.kafka.connector.internal.streaming.schemaevolution.iceberg.IcebergSchemaEvolutionService;
 import com.snowflake.kafka.connector.streaming.iceberg.sql.ComplexJsonRecord;
-import com.snowflake.kafka.connector.streaming.iceberg.sql.MetadataRecord.RecordWithMetadata;
 import com.snowflake.kafka.connector.streaming.iceberg.sql.PrimitiveJsonRecord;
+import com.snowflake.kafka.connector.streaming.iceberg.sql.RecordWithMetadata;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
@@ -49,7 +49,6 @@ public abstract class IcebergIngestionIT extends BaseIcebergIT {
     SnowflakeSinkConnectorConfig.setDefaultValues(config);
     config.put(ICEBERG_ENABLED, "TRUE");
     config.put(ENABLE_SCHEMATIZATION_CONFIG, isSchemaEvolutionEnabled().toString());
-    config.put(SNOWPIPE_STREAMING_ENABLE_SINGLE_BUFFER, "true");
     // "snowflake.streaming.max.client.lag" = 1 second, for faster tests
     config.put(SNOWPIPE_STREAMING_MAX_CLIENT_LAG, "1");
     config.put(ERRORS_TOLERANCE_CONFIG, SnowflakeSinkConnectorConfig.ErrorTolerance.ALL.toString());
@@ -64,13 +63,13 @@ public abstract class IcebergIngestionIT extends BaseIcebergIT {
 
     kafkaRecordErrorReporter = new InMemoryKafkaRecordErrorReporter();
     service =
-        SnowflakeSinkServiceFactory.builder(conn, IngestionMethodConfig.SNOWPIPE_STREAMING, config)
-            .setRecordNumber(1)
-            .setErrorReporter(kafkaRecordErrorReporter)
-            .setSinkTaskContext(new InMemorySinkTaskContext(Collections.singleton(topicPartition)))
-            .setTopic2TableMap(topic2Table)
-            .addTask(tableName, topicPartition)
+        StreamingSinkServiceBuilder.builder(conn, config)
+            .withErrorReporter(kafkaRecordErrorReporter)
+            .withSinkTaskContext(new InMemorySinkTaskContext(Collections.singleton(topicPartition)))
+            .withTopicToTableMap(topic2Table)
+            .withSchemaEvolutionService(new IcebergSchemaEvolutionService(conn))
             .build();
+    service.startPartition(tableName, topicPartition);
   }
 
   @AfterEach
@@ -85,11 +84,11 @@ public abstract class IcebergIngestionIT extends BaseIcebergIT {
 
   protected abstract Boolean isSchemaEvolutionEnabled();
 
-  protected void waitForOffset(int targetOffset) throws Exception {
+  protected void waitForOffset(long targetOffset) throws Exception {
     TestUtils.assertWithRetry(() -> service.getOffset(topicPartition) == targetOffset);
   }
 
-  protected SinkRecord createKafkaRecord(String jsonString, int offset, boolean withSchema) {
+  protected SinkRecord createKafkaRecord(String jsonString, long offset, boolean withSchema) {
     JsonConverter converter = new JsonConverter();
     converter.configure(
         Collections.singletonMap("schemas.enable", Boolean.toString(withSchema)), false);
