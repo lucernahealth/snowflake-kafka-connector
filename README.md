@@ -1,3 +1,23 @@
+# Lucerna Instructions
+
+Use JDK 8 
+```bash
+brew install openjdk@8
+```
+
+Build the project
+```bash
+mvn -f ./pom_confluent.xml clean package -Dgpg.skip=true -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 -DskipTests=true
+```
+
+## Publish a new build 
+
+When we make changes to this repo, we need to build and publish a new version of the jar to S3. To do this, run the following script. Ensure that you have logged into AWS SSO prior to running the script.
+
+```shell
+./push-build.sh
+```
+
 # Snowflake-kafka-connector
 [![License](http://img.shields.io/:license-Apache%202-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.txt)
 
