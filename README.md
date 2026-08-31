@@ -30,11 +30,13 @@ Triage guide (from the DEV-7275 pass, 2026-08):
 
 1. Check the alert's package scope in `pom_confluent.xml` (the pom `push-build.sh` builds). `<scope>test</scope>`
    deps (assertj, log4j-core) are not in the shipped jar → dismiss as `not_used`.
-2. `kafka-clients`: Kafka Connect's `PluginClassLoader` always loads `org.apache.kafka.*` from the Connect
-   runtime, never from this jar → dismiss as `not_used`.
+2. `kafka-clients`: Kafka Connect's plugin isolation treats `org.apache.kafka.*` as parent-first, so the
+   Connect runtime's copy is loaded, not this jar's (verified against the Connect runtime we deploy on;
+   re-check `PluginClassLoader` behavior when the runtime is upgraded, and re-evaluate these alerts if the
+   jar is ever executed outside Kafka Connect) → dismiss as `not_used`.
 3. jackson advisories: most require polymorphic deserialization (`activateDefaultTyping` / `@JsonTypeInfo`),
    which this connector never uses — record JSON is parsed to `JsonNode`/`Map`/`List`. Verify with
-   `grep -rn "activateDefaultTyping\|JsonTypeInfo" src/main` before dismissing as `not_used`.
+   `grep -rnEI "activateDefaultTyping|JsonTypeInfo" src/main` before dismissing as `not_used`.
 4. Anything that *is* reachable at runtime with untrusted input → bump the version property in **both**
    `pom.xml` and `pom_confluent.xml`, rebuild, run tests, and republish via `./push-build.sh`.
 
