@@ -18,6 +18,35 @@ When we make changes to this repo, we need to build and publish a new version of
 ./push-build.sh
 ```
 
+## Dependency alerts policy (frozen jar)
+
+This fork is intentionally frozen at `3.1.0` — `push-build.sh` publishes that exact jar to
+`s3://leap-build-artifacts-persistent/snowflake-kafka-connector/3.1.0/`, and consumers reference it by
+that filename. **We do not bump dependencies here for routine Dependabot alerts.** Only update a package
+when an advisory is a *legitimate, runtime-reachable* security issue for how this connector actually runs;
+otherwise dismiss the alert with a reason and comment.
+
+Triage guide (from the DEV-7275 pass, 2026-08):
+
+1. Check the alert's package scope in `pom_confluent.xml` (the pom `push-build.sh` builds). `<scope>test</scope>`
+   deps (assertj, log4j-core) are not in the shipped jar → dismiss as `not_used`.
+2. `kafka-clients`: Kafka Connect's plugin isolation treats `org.apache.kafka.*` as parent-first, so the
+   Connect runtime's copy is loaded, not this jar's (verified against the Connect runtime we deploy on;
+   re-check `PluginClassLoader` behavior when the runtime is upgraded, and re-evaluate these alerts if the
+   jar is ever executed outside Kafka Connect) → dismiss as `not_used`.
+3. jackson advisories: most require polymorphic deserialization (`activateDefaultTyping` / `@JsonTypeInfo`),
+   which this connector never uses — record JSON is parsed to `JsonNode`/`Map`/`List`. Verify with
+   `grep -rnEI "activateDefaultTyping|JsonTypeInfo" src/main` before dismissing as `not_used`.
+4. Anything that *is* reachable at runtime with untrusted input → bump the version property in **both**
+   `pom.xml` and `pom_confluent.xml`, rebuild, run tests, and republish via `./push-build.sh`.
+
+Dismiss via:
+
+```shell
+gh api -X PATCH repos/lucernahealth/snowflake-kafka-connector/dependabot/alerts/<n> \
+  -f state=dismissed -f dismissed_reason=<not_used|tolerable_risk> -f dismissed_comment="<why, ticket ref>"
+```
+
 # Snowflake-kafka-connector
 [![License](http://img.shields.io/:license-Apache%202-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.txt)
 
